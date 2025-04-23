@@ -14,6 +14,9 @@
 // limitations under the License.
 // </copyright>
 
+using System;
+using System.IO;
+using System.Reflection;
 using System.Web.Http;
 using System.Web.Routing;
 
@@ -23,6 +26,35 @@ public class MvcApplication : System.Web.HttpApplication
 {
     protected void Application_Start()
     {
+            /*try
+            {
+                var assembly = Assembly.Load("OpenTelemetry.AutoInstrumentation, Version=1.0.0.0, Culture=neutral, PublicKeyToken=c0db600a13f60b51");
+                if (assembly == null)
+                {
+                    throw new FileNotFoundException("The assembly OpenTelemetry.AutoInstrumentation could not be loaded");
+                }
+
+                var type = assembly.GetType("OpenTelemetry.AutoInstrumentation.Instrumentation", throwOnError: false);
+                if (type == null)
+                {
+                    throw new TypeLoadException("The type OpenTelemetry.AutoInstrumentation.Instrumentation could not be loaded");
+                }
+
+                var method = type.GetRuntimeMethod("Initialize", Type.EmptyTypes);
+                if (method == null)
+                {
+                    throw new MissingMethodException("The method OpenTelemetry.AutoInstrumentation.Instrumentation.Initialize could not be loaded");
+                }
+
+                method.Invoke(obj: null, parameters: null);
+            }
+            catch (Exception ex)
+            {
+                //Logger.Error(ex, "Error when loading managed assemblies. {0}", ex.Message);
+                throw;
+            }*/
+        
+
         GlobalConfiguration.Configure(WebApiConfig.Register);
         RouteConfig.RegisterRoutes(RouteTable.Routes);
     }

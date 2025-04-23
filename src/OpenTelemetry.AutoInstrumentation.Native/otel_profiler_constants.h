@@ -55,6 +55,10 @@ const WSTRING skip_assembly_prefixes[]{
     WStr("System.Xml"),
 };
 
+const WSTRING skip_assembly_prefixes_ref[]{
+    WStr("OpenTelemetry.AutoInstrumentation"),
+};
+
 const WSTRING skip_assemblies[]{WStr("mscorlib"),
                                 WStr("netstandard"),
                                 WStr("System.Configuration"),

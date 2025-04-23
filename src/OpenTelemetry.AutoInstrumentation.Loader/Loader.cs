@@ -21,11 +21,12 @@ internal partial class Loader
     /// </summary>
     static Loader()
     {
+        Init();
         ManagedProfilerDirectory = ResolveManagedProfilerDirectory();
-
+        Logger.Information($"Loader called for {AppDomain.CurrentDomain.FriendlyName} ({AppDomain.CurrentDomain.Id})");
         try
         {
-            AppDomain.CurrentDomain.AssemblyResolve += AssemblyResolve_ManagedProfilerDependencies;
+            // AppDomain.CurrentDomain.AssemblyResolve += AssemblyResolve_ManagedProfilerDependencies;
         }
         catch (Exception ex)
         {
@@ -34,6 +35,8 @@ internal partial class Loader
 
         TryLoadManagedAssembly();
     }
+
+    static partial void Init();
 
     private static void TryLoadManagedAssembly()
     {

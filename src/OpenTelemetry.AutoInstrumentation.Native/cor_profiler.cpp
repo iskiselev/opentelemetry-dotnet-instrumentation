@@ -614,7 +614,7 @@ HRESULT STDMETHODCALLTYPE CorProfiler::ModuleLoadFinished(ModuleID module_id, HR
     if (Logger::IsDebugEnabled())
     {
         Logger::Debug("ModuleLoadFinished: ", module_id, " ", module_info.assembly.name, " AppDomain ",
-                      module_info.assembly.app_domain_id, " [", module_info.assembly.app_domain_name, "] ",
+                      module_info.assembly.app_domain_id, " [", module_info.assembly.app_domain_name, "] path=", module_info.path,
                       std::boolalpha, " | IsNGEN = ", module_info.IsNGEN(), " | IsDynamic = ", module_info.IsDynamic(),
                       " | IsResource = ", module_info.IsResource(), std::noboolalpha);
     }
@@ -627,6 +627,11 @@ HRESULT STDMETHODCALLTYPE CorProfiler::ModuleLoadFinished(ModuleID module_id, HR
     }
 
     AppDomainID app_domain_id = module_info.assembly.app_domain_id;
+
+    if (module_info.assembly.name == WStr("System.Web"))
+    {
+        PatchSystemWeb(module_id);
+    }
 
     // Identify the AppDomain ID of mscorlib which will be the Shared Domain
     // because mscorlib is always a domain-neutral assembly
@@ -1235,7 +1240,7 @@ HRESULT STDMETHODCALLTYPE CorProfiler::GetAssemblyReferences(const WCHAR*       
     // Skip known framework assemblies that we will not instrument and,
     // as a result, will not need an assembly reference to the
     // managed profiler
-    for (auto&& skip_assembly_pattern : skip_assembly_prefixes)
+    for (auto&& skip_assembly_pattern : skip_assembly_prefixes_ref)
     {
         if (assembly_name.rfind(skip_assembly_pattern, 0) == 0)
         {
@@ -1777,6 +1782,235 @@ HRESULT CorProfiler::RunAutoInstrumentationLoader(const ComPtr<IMetaDataEmit2>& 
 
     return S_OK;
 }
+
+HRESULT CorProfiler::PatchSystemWeb(const ModuleID module_id)
+{
+
+    ComPtr<IUnknown> metadata_interfaces;
+    auto             hr = this->info_->GetModuleMetaData(module_id, ofRead | ofWrite, IID_IMetaDataImport2,
+                                                         metadata_interfaces.GetAddressOf());
+    if (FAILED(hr))
+    {
+        Logger::Warn("PatchSystemWeb: failed to get metadata interface for ", module_id);
+        return hr;
+    }
+
+    const auto& metadata_emit   = metadata_interfaces.As<IMetaDataEmit2>(IID_IMetaDataEmit);
+    const auto& metadata_import = metadata_interfaces.As<IMetaDataImport2>(IID_IMetaDataImport);
+    const auto& assembly_emit = metadata_interfaces.As<IMetaDataAssemblyEmit>(IID_IMetaDataAssemblyImport);
+    const auto& assembly_import = metadata_interfaces.As<IMetaDataAssemblyImport>(IID_IMetaDataAssemblyImport);
+
+    mdAssemblyRef corLibAssemblyRef;
+    {
+        HCORENUM enumerator = nullptr;
+        ULONG    count      = 0;
+        while (assembly_import->EnumAssemblyRefs(&enumerator, &corLibAssemblyRef, 1, &count) == S_OK)
+        {
+            WCHAR            name[kNameMaxSize];
+            ULONG            name_len = 0;
+
+            hr =
+                assembly_import->GetAssemblyRefProps(corLibAssemblyRef, nullptr, nullptr, name, kNameMaxSize,
+                                                      &name_len, nullptr, nullptr, nullptr, nullptr);
+            if (FAILED(hr) || name_len == 0)
+            {
+                Logger::Warn("PatchSystemWeb: GetAssemblyRefProps");
+                continue;
+            }
+
+            if (std::wstring(L"mscorlib") == name)
+            {
+                Logger::Info("PatchSystemWeb: mscorlib found");
+                break;
+            }
+        }
+    }
+
+
+    hr =
+        assembly_emit->DefineAssemblyRef(corAssemblyProperty.ppbPublicKey,
+                                                                corAssemblyProperty.pcbPublicKey,
+                                                                corAssemblyProperty.szName.data(),
+                                                                &corAssemblyProperty.pMetaData,
+                                                                &corAssemblyProperty.pulHashAlgId,
+                                                                sizeof(corAssemblyProperty.pulHashAlgId),
+                                                                corAssemblyProperty.assemblyFlags, &corLibAssemblyRef);
+    if (corLibAssemblyRef == mdAssemblyRefNil)
+    {
+        Logger::Warn("Wrapper corLibAssemblyRef could not be defined.");
+        return hr;
+    }
+
+
+    mdTypeDef application_manager_def;
+    {
+        hr = metadata_import->FindTypeDefByName(L"System.Web.Hosting.ApplicationManager", mdTokenNil,
+                                                &application_manager_def);
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: System.Web.Hosting.ApplicationManager");
+            return hr;
+        }
+    }
+
+    mdTypeDef app_domain_switches_def;
+    {
+        hr =
+            metadata_import->FindTypeDefByName(L"AppDomainSwitches", application_manager_def, &app_domain_switches_def);
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: AppDomainSwitches");
+            return hr;
+        }
+    }
+
+    mdTypeRef app_domain_setup_ref;
+    {
+        hr = metadata_emit->DefineTypeRefByName(corLibAssemblyRef, L"System.AppDomainSetup", &app_domain_setup_ref);
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: System.AppDomainSetup");
+            return hr;
+        }
+    }
+
+    mdTypeRef file_ref;
+    {
+        hr = metadata_emit->DefineTypeRefByName(corLibAssemblyRef, L"System.IO.File", &file_ref);
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: System.IO.File");
+            return hr;
+        }
+    }
+
+    mdMemberRef file_read_all_bytes_ref;
+    {
+        SignatureBuilder file_read_all_bytes_signature =
+            SignatureBuilder{IMAGE_CEE_CS_CALLCONV_DEFAULT, 1, ELEMENT_TYPE_SZARRAY, ELEMENT_TYPE_U1,
+                             ELEMENT_TYPE_STRING};
+        hr = metadata_emit->DefineMemberRef(file_ref, L"ReadAllBytes", file_read_all_bytes_signature.Head(),
+                                            file_read_all_bytes_signature.Size(), &file_read_all_bytes_ref);
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: System.IO.File::ReadAllBytes");
+            return hr;
+        }
+    }
+
+    mdMemberRef app_domain_setup_set_configuration_bytes_ref;
+    {
+        SignatureBuilder app_domain_setup_set_configuration_bytes_signature =
+            SignatureBuilder{IMAGE_CEE_CS_CALLCONV_HASTHIS, 1, ELEMENT_TYPE_VOID, ELEMENT_TYPE_SZARRAY,
+                             ELEMENT_TYPE_U1};
+        hr = metadata_emit->DefineMemberRef(app_domain_setup_ref, L"SetConfigurationBytes",
+                                            app_domain_setup_set_configuration_bytes_signature.Head(),
+                                            app_domain_setup_set_configuration_bytes_signature.Size(),
+                                            &app_domain_setup_set_configuration_bytes_ref);
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: System.AppDomainSetup::SetConfigurationBytes");
+            return hr;
+        }
+    }
+
+    mdMethodDef app_domain_switches_apply_def;
+    {
+        /*SignatureBuilder app_domain_switches_apply_signature =
+         SignatureBuilder{IMAGE_CEE_CS_CALLCONV_HASTHIS, 1, ELEMENT_TYPE_VOID, ELEMENT_TYPE_CLASS}
+        .PushToken(app_domain_setup_ref);*/
+
+        HCORENUM enumerator = nullptr;
+        //mdMethodDef methodDef[1];
+        ULONG       count = 0;
+        metadata_import->EnumMethodsWithName(&enumerator, app_domain_switches_def, L"Apply",
+                                             &app_domain_switches_apply_def, 1, &count);
+        if (FAILED(hr))
+
+        /*hr = metadata_import->FindMethod(app_domain_switches_def, L"Apply",
+                                            app_domain_switches_apply_signature.Head(),
+                                            app_domain_switches_apply_signature.Size(), &app_domain_switches_apply_def);*/
+        if (FAILED(hr) || count != 1)
+        {
+            Logger::Warn("PatchSystemWeb: Apply()");
+            return hr;
+        }
+    }
+
+    const WSTRING web_config = L"C:\\allowall\\Web.config";
+    mdString      web_config_def;
+    {
+        hr = metadata_emit->DefineUserString(web_config.c_str(), (ULONG)web_config.size(), &web_config_def);
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: web_config_def");
+            return hr;
+        }
+    }
+
+
+    {
+        ILRewriter rewriter_app_domain_setup(this->info_, nullptr, module_id, app_domain_switches_apply_def);
+        rewriter_app_domain_setup.Import();
+
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: Failed to import Apply");
+            return hr;
+        }
+
+        // IL_0032: ldloc.0      // appDomainSetup
+        // IL_0033: ldloc.0      // appDomainSetup
+        // IL_0034: callvirt     instance string [mscorlib]System.AppDomainSetup::get_ConfigurationFile()
+        // IL_0039: call         unsigned int8[] [mscorlib]System.IO.File::ReadAllBytes(string)
+        // IL_003e: callvirt     instance void [mscorlib]System.AppDomainSetup::SetConfigurationBytes(unsigned int8[])
+        // IL_0043: nop
+
+        ILInstr* pFirstInstr = rewriter_app_domain_setup.GetILList()->m_pNext;
+        ILInstr* pNewInstr   = nullptr;
+
+        pNewInstr           = rewriter_app_domain_setup.NewILInstr();
+        pNewInstr->m_opcode = CEE_LDARG_1;
+        rewriter_app_domain_setup.InsertBefore(pFirstInstr, pNewInstr);
+
+        pNewInstr           = rewriter_app_domain_setup.NewILInstr();
+        pNewInstr->m_opcode = CEE_LDSTR;
+        pNewInstr->m_Arg32  = web_config_def;
+        rewriter_app_domain_setup.InsertBefore(pFirstInstr, pNewInstr);
+
+        pNewInstr           = rewriter_app_domain_setup.NewILInstr();
+        pNewInstr->m_opcode = CEE_CALL;
+        pNewInstr->m_Arg32 = file_read_all_bytes_ref;
+        rewriter_app_domain_setup.InsertBefore(pFirstInstr, pNewInstr);
+
+        pNewInstr           = rewriter_app_domain_setup.NewILInstr();
+        pNewInstr->m_opcode = CEE_CALLVIRT;
+        pNewInstr->m_Arg32  = app_domain_setup_set_configuration_bytes_ref;
+        rewriter_app_domain_setup.InsertBefore(pFirstInstr, pNewInstr);
+
+
+        if (IsDumpILRewriteEnabled())
+        {
+            mdToken      token = 0;
+            TypeInfo     typeInfo{};
+            WSTRING      methodName = WStr("AppDomainSwitches::Apply");
+            FunctionInfo caller(token, methodName, typeInfo, MethodSignature(), FunctionMethodSignature());
+            Logger::Info(GetILCodes("*** PatchSystemWeb(): Modified Code: ",
+                                    &rewriter_app_domain_setup, caller, metadata_import));
+        }
+
+        hr = rewriter_app_domain_setup.Export();
+        if (FAILED(hr))
+        {
+            Logger::Warn("PatchSystemWeb: Failed to export AppDomainSwitches::Apply");
+            return hr;
+        }
+    }
+
+    Logger::Debug("PatchSystemWeb: Fixed web.config");
+    return S_OK;
+}
+
 
 HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module_id)
 {
