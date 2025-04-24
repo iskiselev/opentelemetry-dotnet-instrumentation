@@ -4,33 +4,26 @@
 #if NETFRAMEWORK
 
 using System.Reflection;
+using OpenTelemetry.AutoInstrumentation.Logging;
 
 namespace OpenTelemetry.AutoInstrumentation.Loader;
 
 /// <summary>
 /// A class that attempts to load the OpenTelemetry.AutoInstrumentation .NET assembly.
 /// </summary>
-internal partial class Loader
+internal partial class Loader2
 {
+    private static readonly IOtelLogger Logger = OtelLogging.GetLogger("Loader");
+    private static readonly string ManagedProfilerDirectory;
     private static bool _isEarlyResolverInstalled;
 
-    static partial void Init()
+    static Loader2()
     {
-        // Validate if early assembly resolver was not installed.
-        // Mostly it will be in case of tests.
-        // But it means, that test behaviour and real execution will be different.
-        _isEarlyResolverInstalled =
-            typeof(AppDomain).GetMethod("__otel_assembly_resolver__", BindingFlags.NonPublic | BindingFlags.Static) != null;
+        _isEarlyResolverInstalled = false;
+        ManagedProfilerDirectory = ResolveManagedProfilerDirectory();
     }
 
-    private static string ResolveManagedProfilerDirectory()
-    {
-        var tracerHomeDirectory = ReadEnvironmentVariable("OTEL_DOTNET_AUTO_HOME") ?? string.Empty;
-        var tracerFrameworkDirectory = "netfx";
-        return Path.Combine(tracerHomeDirectory, tracerFrameworkDirectory);
-    }
-
-    private static Assembly? AssemblyResolve_ManagedProfilerDependencies(object sender, ResolveEventArgs args)
+    public static Assembly? AssemblyResolve_ManagedProfilerDependencies(object sender, ResolveEventArgs args)
     {
         var assemblyName = new AssemblyName(args.Name).Name;
 
@@ -111,6 +104,27 @@ internal partial class Loader
         }
 
         return null;
+    }
+
+    private static string? ReadEnvironmentVariable(string key)
+    {
+        try
+        {
+            return Environment.GetEnvironmentVariable(key);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Error while loading environment variable {0}", key);
+        }
+
+        return null;
+    }
+
+    private static string ResolveManagedProfilerDirectory()
+    {
+        var tracerHomeDirectory = ReadEnvironmentVariable("OTEL_DOTNET_AUTO_HOME") ?? string.Empty;
+        var tracerFrameworkDirectory = "netfx";
+        return Path.Combine(tracerHomeDirectory, tracerFrameworkDirectory);
     }
 }
 #endif
