@@ -22,7 +22,9 @@ namespace OpenTelemetry.AutoInstrumentation;
 /// <summary>
 /// Instrumentation
 /// </summary>
-internal static class Instrumentation
+#pragma warning disable RS0016
+public static class Instrumentation
+#pragma warning restore RS0016
 {
     private static readonly IOtelLogger Logger = OtelLogging.GetLogger();
     private static readonly LazyInstrumentationLoader LazyInstrumentationLoader = new();
@@ -67,7 +69,9 @@ internal static class Instrumentation
     /// Initialize the OpenTelemetry SDK with a pre-defined set of exporters, shims, and
     /// instrumentations.
     /// </summary>
+#pragma warning disable RS0016
     public static void Initialize()
+#pragma warning restore RS0016
     {
         if (Interlocked.Exchange(ref _initialized, value: 1) != 0)
         {

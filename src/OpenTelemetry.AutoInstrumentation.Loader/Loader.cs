@@ -31,6 +31,7 @@ internal class Loader
                     currentAssemblyName.Name ??
                     throw new InvalidOperationException("Current assembly name not resolved"),
                     "OpenTelemetry.AutoInstrumentation");
+            EnvironmentHelper.Logger.Debug($"Loading assembly {otelAutoInstrumentationAssemblyName}");
             var assembly = Assembly.Load(otelAutoInstrumentationAssemblyName);
             if (assembly == null)
             {

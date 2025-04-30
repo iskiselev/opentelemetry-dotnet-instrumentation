@@ -45,6 +45,7 @@ HRESULT MetadataBuilder::EmitAssemblyRef(const trace::AssemblyReference& assembl
                                                          0,
                                                          // flags
                                                          0, &assembly_ref_out);
+    Logger::Warn("Defined assemblyRef (1) ", assembly_ref_out, " for ", assembly_ref.name);
 
     if (FAILED(hr))
     {

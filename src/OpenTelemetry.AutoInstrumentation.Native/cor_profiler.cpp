@@ -768,6 +768,41 @@ HRESULT STDMETHODCALLTYPE CorProfiler::ModuleLoadFinished(ModuleID module_id, HR
         const auto& assembly_import = metadata_interfaces.As<IMetaDataAssemblyImport>(IID_IMetaDataAssemblyImport);
         const auto& assembly_emit   = metadata_interfaces.As<IMetaDataAssemblyEmit>(IID_IMetaDataAssemblyEmit);
 
+        {
+            const auto bytecode_instrumentation_name = trace::profiler->GetBytecodeInstrumentationAssembly();
+            const AssemblyReference assemblyReference =
+                *trace::AssemblyReference::GetFromCache(bytecode_instrumentation_name);
+            ASSEMBLYMETADATA assembly_metadata{};
+
+            assembly_metadata.usMajorVersion   = assemblyReference.version.major;
+            assembly_metadata.usMinorVersion   = assemblyReference.version.minor;
+            assembly_metadata.usBuildNumber    = assemblyReference.version.build;
+            assembly_metadata.usRevisionNumber = assemblyReference.version.revision;
+            if (assemblyReference.locale == WStr("neutral"))
+            {
+                assembly_metadata.szLocale = const_cast<WCHAR*>(WStr("\0"));
+                assembly_metadata.cbLocale = 0;
+            }
+            else
+            {
+                assembly_metadata.szLocale = const_cast<WCHAR*>(assemblyReference.locale.c_str());
+                assembly_metadata.cbLocale = (DWORD)(assemblyReference.locale.size());
+            }
+
+            DWORD public_key_size = 8;
+            if (assemblyReference.public_key == trace::PublicKey())
+            {
+                public_key_size = 0;
+            }
+
+            mdAssemblyRef profilerAssemblyRef;
+            hr = assembly_emit->DefineAssemblyRef(&assemblyReference.public_key.data, public_key_size,
+                                                                   assemblyReference.name.data(), &assembly_metadata,
+                                                                   NULL, 0, 0, &profilerAssemblyRef);
+            Logger::Warn("Defined assemblyRef (0) ", profilerAssemblyRef, " for ", assemblyReference.name, " moduleId ",
+                         module_id);
+        }
+
         const auto& module_metadata =
             ModuleMetadata(metadata_import, metadata_emit, assembly_import, assembly_emit, module_info.assembly.name,
                            module_info.assembly.app_domain_id, &corAssemblyProperty);
@@ -1213,7 +1248,7 @@ void CorProfiler::ConfigureContinuousProfiler(bool         threadSamplingEnabled
 HRESULT STDMETHODCALLTYPE CorProfiler::GetAssemblyReferences(const WCHAR*                           wszAssemblyPath,
                                                              ICorProfilerAssemblyReferenceProvider* pAsmRefProvider)
 {
-    return S_OK;
+    // return S_OK;
 
     if (IsAzureAppServices())
     {
@@ -1344,6 +1379,11 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
         return S_OK;
     }
 
+    ComPtr<IUnknown> metadataInterfaces;
+    hr = this->info_->GetModuleMetaData(module_id, ofRead | ofWrite, IID_IMetaDataImport2,
+                                        metadataInterfaces.GetAddressOf());
+
+
     // We check if we are in CallTarget mode and the loader was already injected.
     const auto& module_info = GetModuleInfo(this->info_, module_id);
 
@@ -1356,12 +1396,22 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
         // Loader was already injected in a calltarget scenario, we don't need to do anything else here
         return S_OK;
     }
-
-    ComPtr<IUnknown> metadataInterfaces;
-    hr = this->info_->GetModuleMetaData(module_id, ofRead | ofWrite, IID_IMetaDataImport2,
-                                        metadataInterfaces.GetAddressOf());
-
     const auto& metadataImport = metadataInterfaces.As<IMetaDataImport2>(IID_IMetaDataImport);
+
+    // get function info
+    const auto& caller = GetFunctionInfo(metadataImport, function_token);
+    if (!caller.IsValid())
+    {
+        return S_OK;
+    }
+
+    if (Logger::IsDebugEnabled())
+    {
+        Logger::Debug("JITCompilationStarted: function_id=", function_id, " token=", function_token,
+                      " name=", caller.type.name, ".", caller.name, "()");
+    }
+
+
     const auto& metadataEmit   = metadataInterfaces.As<IMetaDataEmit2>(IID_IMetaDataEmit);
     const auto& assemblyImport = metadataInterfaces.As<IMetaDataAssemblyImport>(IID_IMetaDataAssemblyImport);
     const auto& assemblyEmit   = metadataInterfaces.As<IMetaDataAssemblyEmit>(IID_IMetaDataAssemblyEmit);
@@ -1373,19 +1423,6 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
         std::make_unique<ModuleMetadata>(metadataImport, metadataEmit, assemblyImport, assemblyEmit,
                                          module_info.assembly.name, module_info.assembly.app_domain_id,
                                          &corAssemblyProperty);
-
-    // get function info
-    const auto& caller = GetFunctionInfo(module_metadata->metadata_import, function_token);
-    if (!caller.IsValid())
-    {
-        return S_OK;
-    }
-
-    if (Logger::IsDebugEnabled())
-    {
-        Logger::Debug("JITCompilationStarted: function_id=", function_id, " token=", function_token,
-                      " name=", caller.type.name, ".", caller.name, "()");
-    }
 
     // IIS: Ensure that the OpenTelemetry.AutoInstrumentation assembly is inserted into
     // System.Web.Compilation.BuildManager.InvokePreStartInitMethods.
@@ -3354,10 +3391,6 @@ HRESULT CorProfiler::GenerateLoaderType(const ModuleID module_id)
         pNewInstr->m_Arg32  = system_action_of_system_app_domain_setup_invoke_token;
         rewriter_void.InsertBefore(pFirstInstr, pNewInstr);
 
-        /*pNewInstr           = rewriter_void.NewILInstr();
-        pNewInstr->m_opcode = CEE_POP;
-        rewriter_void.InsertBefore(pFirstInstr, pNewInstr);*/
-
         pNewInstr           = rewriter_void.NewILInstr();
         pNewInstr->m_opcode = CEE_RET;
         rewriter_void.InsertBefore(pFirstInstr, pNewInstr);
@@ -3565,7 +3598,7 @@ HRESULT CorProfiler::GenerateLoaderMethod(const ModuleID module_id, mdMethodDef*
     const auto& assembly_import = metadata_interfaces.As<IMetaDataAssemblyImport>(IID_IMetaDataAssemblyImport);
     const auto& assembly_emit   = metadata_interfaces.As<IMetaDataAssemblyEmit>(IID_IMetaDataAssemblyEmit);
 
-    mdAssemblyRef corlib_ref;
+    /*mdAssemblyRef corlib_ref;
     hr = GetCorLibAssemblyRef(assembly_emit, corAssemblyProperty, &corlib_ref);
 
     if (FAILED(hr))
@@ -3596,6 +3629,66 @@ HRESULT CorProfiler::GenerateLoaderMethod(const ModuleID module_id, mdMethodDef*
         if (FAILED(hr))
         {
             Logger::Warn("GenerateLoaderMethod: DefineMemberRef __DDVoidMethodCall__ failed");
+            return hr;
+        }
+    }*/
+
+    mdAssemblyRef profilerAssemblyRef;
+    {
+        const auto              bytecode_instrumentation_name = trace::profiler->GetBytecodeInstrumentationAssembly();
+        const AssemblyReference assemblyReference =
+            *trace::AssemblyReference::GetFromCache(bytecode_instrumentation_name);
+        ASSEMBLYMETADATA assembly_metadata{};
+
+        assembly_metadata.usMajorVersion   = assemblyReference.version.major;
+        assembly_metadata.usMinorVersion   = assemblyReference.version.minor;
+        assembly_metadata.usBuildNumber    = assemblyReference.version.build;
+        assembly_metadata.usRevisionNumber = assemblyReference.version.revision;
+        if (assemblyReference.locale == WStr("neutral"))
+        {
+            assembly_metadata.szLocale = const_cast<WCHAR*>(WStr("\0"));
+            assembly_metadata.cbLocale = 0;
+        }
+        else
+        {
+            assembly_metadata.szLocale = const_cast<WCHAR*>(assemblyReference.locale.c_str());
+            assembly_metadata.cbLocale = (DWORD)(assemblyReference.locale.size());
+        }
+
+        DWORD public_key_size = 8;
+        if (assemblyReference.public_key == trace::PublicKey())
+        {
+            public_key_size = 0;
+        }
+
+        hr = assembly_emit->DefineAssemblyRef(&assemblyReference.public_key.data, public_key_size,
+                                              assemblyReference.name.data(), &assembly_metadata, NULL, 0, 0,
+                                              &profilerAssemblyRef);
+        Logger::Warn("Defined assemblyRef (_) ", profilerAssemblyRef, " for ", assemblyReference.name, " moduleId ",
+                     module_id);
+    }
+
+    mdTypeRef init_type_ref;
+    hr = metadata_emit->DefineTypeRefByName(profilerAssemblyRef, WStr("OpenTelemetry.AutoInstrumentation.Instrumentation"), &init_type_ref);
+    if (FAILED(hr))
+    {
+        Logger::Warn("GenerateLoaderMethod: DefineTypeRefByName OpenTelemetry.AutoInstrumentation.Instrumentation failed");
+        return hr;
+    }
+
+    {
+        // Define a new static method __DDVoidMethodCall__ on the new type that has a void return type and takes no
+        // arguments
+        BYTE initialize_signature[] = {
+            IMAGE_CEE_CS_CALLCONV_DEFAULT, // Calling convention
+            0,                             // Number of parameters
+            ELEMENT_TYPE_VOID,             // Return type
+        };
+        hr = metadata_emit->DefineMemberRef(init_type_ref, WStr("Initialize"), initialize_signature,
+                                            sizeof(initialize_signature), ret_method_token);
+        if (FAILED(hr))
+        {
+            Logger::Warn("GenerateLoaderMethod: DefineMemberRef Initialize failed");
             return hr;
         }
     }

@@ -53,6 +53,7 @@ const WSTRING skip_assembly_prefixes[]{
     WStr("System.Text"),
     WStr("System.Threading"),
     WStr("System.Xml"),
+    WStr("OpenTelemetry"),
 };
 
 const WSTRING skip_assemblies[]{WStr("mscorlib"),

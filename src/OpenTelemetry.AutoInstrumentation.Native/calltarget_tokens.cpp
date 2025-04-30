@@ -584,6 +584,7 @@ HRESULT CallTargetTokens::EnsureBaseCalltargetTokens()
         hr = module_metadata->assembly_emit->DefineAssemblyRef(&assemblyReference.public_key.data, public_key_size,
                                                                assemblyReference.name.data(), &assembly_metadata, NULL,
                                                                0, 0, &profilerAssemblyRef);
+        Logger::Warn("Defined assemblyRef (2) ", profilerAssemblyRef, "for ", assemblyReference.name);
 
         if (FAILED(hr))
         {
