@@ -10,19 +10,11 @@ namespace OpenTelemetry.AutoInstrumentation.Loader;
 /// <summary>
 /// A class that attempts to load the OpenTelemetry.AutoInstrumentation .NET assembly.
 /// </summary>
-internal partial class Loader
+internal partial class AssemblyResolver
 {
     internal static System.Runtime.Loader.AssemblyLoadContext DependencyLoadContext { get; } = new ManagedProfilerAssemblyLoadContext();
 
     internal static string[]? StoreFiles { get; } = GetStoreFiles();
-
-    private static string ResolveManagedProfilerDirectory()
-    {
-        string tracerFrameworkDirectory = "net";
-        string tracerHomeDirectory = ReadEnvironmentVariable("OTEL_DOTNET_AUTO_HOME") ?? string.Empty;
-
-        return Path.Combine(tracerHomeDirectory, tracerFrameworkDirectory);
-    }
 
     private static string[]? GetStoreFiles()
     {
@@ -69,7 +61,7 @@ internal partial class Loader
             return null;
         }
 
-        var path = Path.Combine(ManagedProfilerDirectory, $"{assemblyName.Name}.dll");
+        var path = Path.Combine(EnvironmentHelper.ManagedProfilerDirectory, $"{assemblyName.Name}.dll");
 
         // Only load the main profiler into the default Assembly Load Context.
         // If OpenTelemetry.AutoInstrumentation or other libraries are provided by the NuGet package their loads are handled in the following two ways.
@@ -80,12 +72,12 @@ internal partial class Loader
         //    load the originally referenced version
         if (assemblyName.Name != null && assemblyName.Name.StartsWith("OpenTelemetry.AutoInstrumentation", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
         {
-            Logger.Debug("Loading {0} with Assembly.LoadFrom", path);
+            EnvironmentHelper.Logger.Debug("Loading {0} with Assembly.LoadFrom", path);
             return Assembly.LoadFrom(path);
         }
         else if (File.Exists(path))
         {
-            Logger.Debug("Loading {0} with DependencyLoadContext.LoadFromAssemblyPath", path);
+            EnvironmentHelper.Logger.Debug("Loading {0} with DependencyLoadContext.LoadFromAssemblyPath", path);
             return DependencyLoadContext.LoadFromAssemblyPath(path); // Load unresolved framework and third-party dependencies into a custom Assembly Load Context
         }
         else
