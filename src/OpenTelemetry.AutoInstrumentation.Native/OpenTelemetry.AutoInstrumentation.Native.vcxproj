@@ -200,6 +200,7 @@
     <ClInclude Include="logger.h" />
     <ClInclude Include="logger_impl.h" />
     <ClInclude Include="macros.h" />
+    <ClInclude Include="member_resolver.h" />
     <ClInclude Include="metadata_builder.h" />
     <ClInclude Include="method_rewriter.h" />
     <ClInclude Include="miniutf.hpp" />
@@ -231,6 +232,7 @@
     <ClCompile Include="il_rewriter.cpp" />
     <ClCompile Include="il_rewriter_wrapper.cpp" />
     <ClCompile Include="integration.cpp" />
+    <ClCompile Include="member_resolver.cpp" />
     <ClCompile Include="metadata_builder.cpp" />
     <ClCompile Include="method_rewriter.cpp" />
     <ClCompile Include="miniutf.cpp" />

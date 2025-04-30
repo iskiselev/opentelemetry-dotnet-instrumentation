@@ -106,6 +106,8 @@ private:
     //
     HRESULT RunAutoInstrumentationLoader(const ComPtr<IMetaDataEmit2>&, const ModuleID module_id, const mdToken function_token, const FunctionInfo& caller, const ModuleMetadata& module_metadata);
     HRESULT GenerateLoaderMethod(const ModuleID module_id, mdMethodDef* ret_method_token);
+    HRESULT GenerateLoaderType(const ModuleID module_id);
+    HRESULT PatchSystemWeb(const ModuleID module_id);
     HRESULT AddIISPreStartInitFlags(const ModuleID module_id, const mdToken function_token);
     HRESULT GenerateAppDomainAssemblyLoaderMethod(const ModuleID module_id);
 #endif
