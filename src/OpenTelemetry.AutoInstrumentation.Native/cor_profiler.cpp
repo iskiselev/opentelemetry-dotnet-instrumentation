@@ -676,7 +676,7 @@ HRESULT STDMETHODCALLTYPE CorProfiler::ModuleLoadFinished(ModuleID module_id, HR
         if (runtime_information_.is_desktop())
         {
             GenerateLoaderType(module_id);
-            GenerateAppDomainAssemblyLoaderMethod(module_id);
+            // GenerateAppDomainAssemblyLoaderMethod(module_id);
         }
 #endif
 
@@ -1864,6 +1864,22 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         }
     }
 
+    mdMethodDef assembly_load_def;
+    {
+        SignatureBuilder appdomain_load_signature =
+            SignatureBuilder{IMAGE_CEE_CS_CALLCONV_DEFAULT, 1, ELEMENT_TYPE_CLASS}
+                .PushToken(assembly_def)
+                .PushRawBytes({ELEMENT_TYPE_SZARRAY, ELEMENT_TYPE_U8});
+        hr = metadata_import->FindMethod(assembly_def, L"Load", appdomain_load_signature.Head(),
+                                         appdomain_load_signature.Size(), &assembly_load_def);
+        if (FAILED(hr))
+        {
+            Logger::Warn("GenerateAppDomainAssemblyLoaderMethod: Failed to resolve "
+                         "System.Reflection.Assembly::Load(string)");
+            return hr;
+        }
+    }
+
     mdTypeDef resolve_event_args_def;
     {
         hr = metadata_import->FindTypeDefByName(L"System.ResolveEventArgs", mdTokenNil, &resolve_event_args_def);
@@ -1933,6 +1949,19 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         }
     }
 
+    mdMethodDef file_read_all_bytes_def;
+    {
+        COR_SIGNATURE file_read_all_bytes_signature[] = {IMAGE_CEE_CS_CALLCONV_DEFAULT, 1, ELEMENT_TYPE_SZARRAY,
+                                                 ELEMENT_TYPE_U1, ELEMENT_TYPE_STRING};
+        hr = metadata_import->FindMethod(file_def, L"ReadAllBytes", file_read_all_bytes_signature,
+                                         sizeof(file_read_all_bytes_signature), &file_read_all_bytes_def);
+        if (FAILED(hr))
+        {
+            Logger::Warn("GenerateAppDomainAssemblyLoaderMethod: Failed to resolve System.IO.File::ReadAllBytes");
+            return hr;
+        }
+    }
+
     mdTypeDef exception_def;
     {
         hr = metadata_import->FindTypeDefByName(L"System.Exception", mdTokenNil, &exception_def);
@@ -1949,6 +1978,20 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         if (FAILED(hr))
         {
             Logger::Warn("GenerateAppDomainAssemblyLoaderMethod: Failed to resolve System.AppDomain");
+            return hr;
+        }
+    }
+
+    mdFieldDef assembly_field_token = mdFieldDefNil;
+    {
+        SignatureBuilder assembly_field_signature =
+            SignatureBuilder{IMAGE_CEE_CS_CALLCONV_FIELD, ELEMENT_TYPE_CLASS}.PushToken(assembly_def);
+        hr = metadata_emit->DefineField(app_domain_def, WStr("_assembly"), fdStatic | fdPrivate,
+                                        assembly_field_signature.Head(), assembly_field_signature.Size(), 0, nullptr, 0,
+                                        &assembly_field_token);
+        if (FAILED(hr))
+        {
+            Logger::Warn("GenerateAppDomainAssemblyLoaderMethod: Failed to define _assembly field");
             return hr;
         }
     }
@@ -2059,19 +2102,12 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         ILInstr* pLastInstr = rewriter_assembly_resolver.GetILList()->m_pNext;
         ILInstr* pNewInstr  = nullptr;
 
-        std::vector<ILInstr*> branches;
+        std::vector<ILInstr*> branches_3e;
+        ILInstr*              branch_44;
         auto                  newEHClauses = new EHClause[1];
         EHClause&             eh_clause    = newEHClauses[0];
         eh_clause.m_Flags                  = COR_ILEXCEPTION_CLAUSE_NONE;
         eh_clause.m_ClassToken             = exception_def;
-
-        pNewInstr           = rewriter_assembly_resolver.NewILInstr();
-        pNewInstr->m_opcode = CEE_LDNULL;
-        rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
-
-        pNewInstr           = rewriter_assembly_resolver.NewILInstr();
-        pNewInstr->m_opcode = CEE_STLOC_0;
-        rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_LDARG_1;
@@ -2095,7 +2131,17 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_BRFALSE_S;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
-        branches.push_back(pNewInstr);
+        branch_44 = pNewInstr;
+
+        pNewInstr           = rewriter_assembly_resolver.NewILInstr();
+        pNewInstr->m_opcode = CEE_LDSFLD;
+        pNewInstr->m_Arg32  = assembly_field_token;
+        rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
+
+        pNewInstr           = rewriter_assembly_resolver.NewILInstr();
+        pNewInstr->m_opcode = CEE_BRTRUE_S;
+        rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
+        branches_3e.push_back(pNewInstr);
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_LDSTR;
@@ -2110,7 +2156,7 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_BRFALSE_S;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
-        branches.push_back(pNewInstr);
+        branches_3e.push_back(pNewInstr);
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_LDSTR;
@@ -2120,17 +2166,23 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_CALL;
-        pNewInstr->m_Arg32  = assembly_load_from_def;
+        pNewInstr->m_Arg32  = file_read_all_bytes_def;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
-        pNewInstr->m_opcode = CEE_STLOC_0;
+        pNewInstr->m_opcode = CEE_CALL;
+        pNewInstr->m_Arg32  = assembly_load_def;
+        rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
+
+        pNewInstr           = rewriter_assembly_resolver.NewILInstr();
+        pNewInstr->m_opcode = CEE_STSFLD;
+        pNewInstr->m_Arg32  = assembly_field_token;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_LEAVE_S;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
-        branches.push_back(pNewInstr);
+        branches_3e.push_back(pNewInstr);
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_POP;
@@ -2140,13 +2192,14 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_LEAVE_S;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
-        branches.push_back(pNewInstr);
+        branches_3e.push_back(pNewInstr);
         eh_clause.m_pHandlerEnd = pNewInstr;
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
-        pNewInstr->m_opcode = CEE_LDLOC_0;
+        pNewInstr->m_opcode = CEE_LDSFLD;
+        pNewInstr->m_Arg32  = assembly_field_token;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
-        for (ILInstr* branch_instruction : branches)
+        for (ILInstr* branch_instruction : branches_3e)
         {
             branch_instruction->m_pTarget = pNewInstr;
         }
@@ -2160,6 +2213,7 @@ HRESULT CorProfiler::GenerateAppDomainAssemblyLoaderMethod(const ModuleID module
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_LDNULL;
         rewriter_assembly_resolver.InsertBefore(pLastInstr, pNewInstr);
+        branch_44->m_pTarget = pNewInstr;
 
         pNewInstr           = rewriter_assembly_resolver.NewILInstr();
         pNewInstr->m_opcode = CEE_RET;
