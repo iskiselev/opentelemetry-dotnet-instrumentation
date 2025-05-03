@@ -617,8 +617,14 @@ HRESULT STDMETHODCALLTYPE CorProfiler::ModuleLoadFinished(ModuleID module_id, HR
         Logger::Debug("ModuleLoadFinished: ", module_id, " ", module_info.assembly.name, " AppDomain ",
                       module_info.assembly.app_domain_id, " [", module_info.assembly.app_domain_name, "] ",
                       std::boolalpha, " | IsNGEN = ", module_info.IsNGEN(), " | IsDynamic = ", module_info.IsDynamic(),
-                      " | IsResource = ", module_info.IsResource(), std::noboolalpha);
+                      " | IsResource = ", module_info.IsResource(), " | Path = ", module_info.path,
+                      std::noboolalpha);
     }
+
+    module_ids_.push_back(module_id);
+
+    return S_OK;
+
 
     if (module_info.IsNGEN())
     {
@@ -1213,6 +1219,7 @@ void CorProfiler::ConfigureContinuousProfiler(bool         threadSamplingEnabled
 HRESULT STDMETHODCALLTYPE CorProfiler::GetAssemblyReferences(const WCHAR*                           wszAssemblyPath,
                                                              ICorProfilerAssemblyReferenceProvider* pAsmRefProvider)
 {
+        return S_OK;
     if (IsAzureAppServices())
     {
         Logger::Debug(
@@ -1345,16 +1352,6 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
     // We check if we are in CallTarget mode and the loader was already injected.
     const auto& module_info = GetModuleInfo(this->info_, module_id);
 
-    bool has_loader_injected_in_appdomain =
-        first_jit_compilation_app_domains.find(module_info.assembly.app_domain_id) !=
-        first_jit_compilation_app_domains.end();
-
-    if (has_loader_injected_in_appdomain)
-    {
-        // Loader was already injected in a calltarget scenario, we don't need to do anything else here
-        return S_OK;
-    }
-
     ComPtr<IUnknown> metadataInterfaces;
     hr = this->info_->GetModuleMetaData(module_id, ofRead | ofWrite, IID_IMetaDataImport2,
                                         metadataInterfaces.GetAddressOf());
@@ -1364,8 +1361,8 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
     const auto& assemblyImport = metadataInterfaces.As<IMetaDataAssemblyImport>(IID_IMetaDataAssemblyImport);
     const auto& assemblyEmit   = metadataInterfaces.As<IMetaDataAssemblyEmit>(IID_IMetaDataAssemblyEmit);
 
-    Logger::Debug("Temporaly allocating the ModuleMetadata for injection. ModuleId=", module_id,
-                  " ModuleName=", module_info.assembly.name);
+    // Logger::Debug("Temporaly allocating the ModuleMetadata for injection. ModuleId=", module_id,
+    //              " ModuleName=", module_info.assembly.name);
 
     std::unique_ptr<ModuleMetadata> module_metadata =
         std::make_unique<ModuleMetadata>(metadataImport, metadataEmit, assemblyImport, assemblyEmit,
@@ -1383,6 +1380,17 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
     {
         Logger::Debug("JITCompilationStarted: function_id=", function_id, " token=", function_token,
                       " name=", caller.type.name, ".", caller.name, "()");
+    }
+    return S_OK;
+
+    bool has_loader_injected_in_appdomain =
+        first_jit_compilation_app_domains.find(module_info.assembly.app_domain_id) !=
+        first_jit_compilation_app_domains.end();
+
+    if (has_loader_injected_in_appdomain)
+    {
+        // Loader was already injected in a calltarget scenario, we don't need to do anything else here
+        return S_OK;
     }
 
     // IIS: Ensure that the OpenTelemetry.AutoInstrumentation assembly is inserted into

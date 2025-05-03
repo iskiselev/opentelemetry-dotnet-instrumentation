@@ -3,6 +3,7 @@
 
 #if NETFRAMEWORK
 
+using System;
 using System.Reflection;
 
 namespace OpenTelemetry.AutoInstrumentation.Loader;
@@ -63,6 +64,33 @@ internal partial class AssemblyResolver
                     EnvironmentHelper.Logger.Debug(ex, "Assembly.LoadFrom(\"{0}\") Exception: {1}", assemblyInfo.Path, ex.Message);
                 }
             }
+        }
+
+        return null;
+    }
+
+#pragma warning disable SA1201
+    private static Assembly? _asm;
+#pragma warning restore SA1201
+
+#pragma warning disable SA1300
+    private static System.Reflection.Assembly? __otel_assembly_resolver__(object sender, System.ResolveEventArgs args)
+#pragma warning restore SA1300
+    {
+        if (args.Name == "OpenTelemetry.AutoInstrumentation, Version=..., Culture=neutral, PublicKeyToken=...")
+        {
+            if (_asm is not { } && File.Exists("<pre-calcululated-assembly-path>"))
+            {
+                try
+                {
+                    _asm = Assembly.Load(File.ReadAllBytes("<pre-calcululated-assembly-path>"));
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            return _asm;
         }
 
         return null;
