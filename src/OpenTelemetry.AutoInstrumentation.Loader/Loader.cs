@@ -11,10 +11,7 @@ namespace OpenTelemetry.AutoInstrumentation.Loader;
 /// </summary>
 internal class Loader
 {
-    private const string LoaderLoggerSuffix = "Loader";
-    private static readonly IOtelLogger Logger = OtelLogging.GetLogger(LoaderLoggerSuffix);
-
-    private static int _isExiting;
+    // private static int _isExiting;
 
     /// <summary>
     /// Initializes static members of the <see cref="Loader"/> class.
@@ -24,29 +21,29 @@ internal class Loader
     {
         try
         {
-            AppDomain.CurrentDomain.AssemblyResolve += new AssemblyResolver(Logger).AssemblyResolve_ManagedProfilerDependencies;
+            AppDomain.CurrentDomain.AssemblyResolve += new AssemblyResolver(EnvironmentHelper.Logger).AssemblyResolve_ManagedProfilerDependencies;
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Unable to register a callback to the CurrentDomain.AssemblyResolve event.");
+            EnvironmentHelper.Logger.Error(ex, "Unable to register a callback to the CurrentDomain.AssemblyResolve event.");
         }
 
         TryLoadManagedAssembly();
 
         // AssemblyResolve_ManagedProfilerDependencies logs only if Debug enabled.
         // If Debug is not enabled, logger won't be needed anymore.
-        if (Logger.IsEnabled(LogLevel.Debug))
+        /*if (EnvironmentHelper.Logger.IsEnabled(LogLevel.Debug))
         {
             // Register shutdown on exit
             AppDomain.CurrentDomain.ProcessExit += OnExit;
         }
         else
         {
-            OtelLogging.CloseLogger(LoaderLoggerSuffix, Logger);
-        }
+            OtelLogging.CloseLogger(LoaderLoggerSuffix, EnvironmentHelper.Logger);
+        }*/
     }
 
-    private static void OnExit(object? sender, EventArgs e)
+    /*private static void OnExit(object? sender, EventArgs e)
     {
         if (Interlocked.Exchange(ref _isExiting, value: 1) != 0)
         {
@@ -54,12 +51,12 @@ internal class Loader
             return;
         }
 
-        OtelLogging.CloseLogger(LoaderLoggerSuffix, Logger);
-    }
+        OtelLogging.CloseLogger(LoaderLoggerSuffix, EnvironmentHelper.Logger);
+    }*/
 
     private static void TryLoadManagedAssembly()
     {
-        Logger.Information("Managed Loader TryLoadManagedAssembly()");
+        EnvironmentHelper.Logger.Information("Managed Loader TryLoadManagedAssembly()");
 
         try
         {
@@ -85,7 +82,7 @@ internal class Loader
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Error when loading managed assemblies. {0}", ex.Message);
+            EnvironmentHelper.Logger.Error(ex, "Error when loading managed assemblies. {0}", ex.Message);
             throw;
         }
     }
