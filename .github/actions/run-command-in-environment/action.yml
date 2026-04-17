@@ -3,7 +3,7 @@ description: Run a shell command on the host or inside an existing Docker contai
 
 inputs:
   execution-mode:
-    description: Either `container` or a shell name. If empty, defaults to `container` when container-name is set, otherwise uses the platform default shell.
+    description: Either `container` or a shell name. If empty, defaults to `container` when container-name is set, otherwise uses `pwsh` on Windows and `bash` on non-Windows runners.
     required: false
     default: ""
   container-name:
@@ -35,8 +35,14 @@ runs:
           throw 'container-name cannot be combined with a non-container execution-mode.'
         }
 
-    - name: Run on host with implicit shell
-      if: ${{ inputs.execution-mode == '' && inputs.container-name == '' }}
+    - name: Run on host with default Windows shell
+      if: ${{ inputs.execution-mode == '' && inputs.container-name == '' && runner.os == 'Windows' }}
+      shell: pwsh
+      run: ${{ inputs.run }}
+
+    - name: Run on host with default non-Windows shell
+      if: ${{ inputs.execution-mode == '' && inputs.container-name == '' && runner.os != 'Windows' }}
+      shell: bash
       run: ${{ inputs.run }}
 
     - name: Run on host with explicit shell
