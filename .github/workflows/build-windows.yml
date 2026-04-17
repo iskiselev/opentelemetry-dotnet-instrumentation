@@ -12,16 +12,8 @@ permissions:
 
 jobs:
   build-windows:
-    runs-on: windows-2022
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag: v6.0.2
-        with:
-          fetch-depth: 0 # fetching all, needed to correctly calculate version
-
-      - name: Run host build
-        uses: ./.github/actions/run-build-host
-        with:
-          artifact-name: windows-2022
-          log-directory: /c/ProgramData/OpenTelemetry .NET AutoInstrumentation/logs
+    uses: ./.github/workflows/_build-host.yml
+    with:
+      runner: windows-2022
+      artifact-name: windows-2022
+      log-directory: /c/ProgramData/OpenTelemetry .NET AutoInstrumentation/logs
