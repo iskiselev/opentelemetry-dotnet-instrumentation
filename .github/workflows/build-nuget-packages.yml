@@ -1,4 +1,4 @@
-name: Build NuGet Packages and normalized artifacts
+name: Build NuGet Packages
 
 on:
   workflow_call:
@@ -17,8 +17,8 @@ env:
 
 jobs:
   build-nuget-packages:
-    # In principle this job "needs: [ build, build-container ]", however, that would cause the build and build-container
-    # jobs to run twice, which is not what we want. Instead, we let the "caller" job handle the dependencies.
+    # In principle this job needs the build outputs, however that would cause the upstream reusable workflow
+    # to run twice. Instead, we let the caller workflow handle the dependencies.
     outputs:
       nuget-version-suffix: ${{ steps.set-nuget-version-suffix.outputs.suffix }}
     runs-on: windows-2022
@@ -80,33 +80,6 @@ jobs:
           name: bin-macos-14
           path: bin/ci-artifacts/bin-macos-14
 
-      - name: Normalize managed binaries for packaging
-        shell: pwsh
-        run: |
-          $managedSource = "bin/ci-artifacts/bin-windows-2022/net"
-          if (-not (Test-Path $managedSource)) {
-            throw "Canonical managed binary source not found: $managedSource"
-          }
-
-          $releaseArtifacts = @(
-            "bin-alpine-x64",
-            "bin-alpine-arm64",
-            "bin-ubuntu-22.04",
-            "bin-ubuntu-22.04-arm",
-            "bin-macos-14"
-          )
-
-          foreach ($artifact in $releaseArtifacts) {
-            $targetNet = "bin/ci-artifacts/$artifact/net"
-            if (-not (Test-Path $targetNet)) {
-              throw "Expected managed folder not found: $targetNet"
-            }
-
-            Remove-Item $targetNet -Recurse -Force
-            New-Item -ItemType Directory -Path $targetNet -Force | Out-Null
-            Copy-Item -Path (Join-Path $managedSource "*") -Destination $targetNet -Recurse -Force
-          }
-
       - name: Build NuGet packages
         run: ./build.cmd BuildNuGetPackages
 
@@ -135,39 +108,3 @@ jobs:
         with:
           name: bin-nuget-packages
           path: bin/nuget-artifacts/
-
-      - name: Upload normalized Windows release artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
-        with:
-          name: bin-windows-2022-normalized
-          path: bin/ci-artifacts/bin-windows-2022/*
-
-      - name: Upload normalized Ubuntu x64 release artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
-        with:
-          name: bin-ubuntu-22.04-normalized
-          path: bin/ci-artifacts/bin-ubuntu-22.04/*
-
-      - name: Upload normalized Ubuntu arm64 release artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
-        with:
-          name: bin-ubuntu-22.04-arm-normalized
-          path: bin/ci-artifacts/bin-ubuntu-22.04-arm/*
-
-      - name: Upload normalized Alpine x64 release artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
-        with:
-          name: bin-alpine-x64-normalized
-          path: bin/ci-artifacts/bin-alpine-x64/*
-
-      - name: Upload normalized Alpine arm64 release artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
-        with:
-          name: bin-alpine-arm64-normalized
-          path: bin/ci-artifacts/bin-alpine-arm64/*
-
-      - name: Upload normalized macOS release artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
-        with:
-          name: bin-macos-14-normalized
-          path: bin/ci-artifacts/bin-macos-14/*

@@ -1,0 +1,123 @@
+name: Run Build Workflow
+description: Set up the SDKs, restore dependencies, and run a build target on the host or in Docker.
+
+inputs:
+  execution-mode:
+    description: Whether to run the build target on the host or in Docker.
+    required: false
+    default: host
+  build-target:
+    description: Build target to execute.
+    required: false
+    default: BuildWorkflow
+  dockerfile:
+    description: Path to the Dockerfile used for container execution.
+    required: false
+    default: ""
+  image-name:
+    description: Docker image tag used for container execution.
+    required: false
+    default: ""
+  environment-variables:
+    description: Multiline list of environment variables in KEY=VALUE form to set for the build command.
+    required: false
+    default: ""
+  container-setup-command:
+    description: Additional setup command to run inside the container before the build target.
+    required: false
+    default: git config --global --add safe.directory /project
+
+runs:
+  using: composite
+  steps:
+    - name: Setup .NET
+      if: ${{ inputs.execution-mode == 'host' }}
+      uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # tag: v5.2.0
+      with:
+        dotnet-version: |
+          8.0.419
+          9.0.312
+          10.0.201
+
+    - name: Check for NuGet packages cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # tag: v5.0.5
+      id: nuget-cache
+      with:
+        key: ${{ hashFiles('**/Directory.packages.props', './build/LibraryVersions.g.cs', '**/packages.config' ) }}
+        path: ${{ env.NUGET_PACKAGES }}
+
+    - name: Restore NuGet packages
+      if: ${{ inputs.execution-mode == 'host' && steps.nuget-cache.outputs.cache-hit != 'true' }}
+      shell: bash
+      run: ./build.cmd Restore
+
+    - name: Prepare build target command
+      id: prepare-build-target
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [[ "${{ inputs.execution-mode }}" == "container" ]]; then
+          cat >> "$GITHUB_OUTPUT" <<'EOF'
+        command<<__COMMAND__
+        set -e
+        ${{ inputs.container-setup-command }}
+        ./build.sh ${{ inputs.build-target }}
+        __COMMAND__
+        environment_variables<<__ENVIRONMENT_VARIABLES__
+        NUGET_PACKAGES=/project/packages
+        ${{ inputs.environment-variables }}
+        __ENVIRONMENT_VARIABLES__
+        EOF
+        else
+          cat >> "$GITHUB_OUTPUT" <<'EOF'
+        command<<__COMMAND__
+        ./build.cmd ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
+        __COMMAND__
+        environment_variables<<__ENVIRONMENT_VARIABLES__
+        ${{ inputs.environment-variables }}
+        __ENVIRONMENT_VARIABLES__
+        EOF
+        fi
+
+    - name: Validate container inputs
+      if: ${{ inputs.execution-mode == 'container' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -z "${{ inputs.dockerfile }}" ]]; then
+          echo "dockerfile input is required for container execution" >&2
+          exit 1
+        fi
+        if [[ -z "${{ inputs.image-name }}" ]]; then
+          echo "image-name input is required for container execution" >&2
+          exit 1
+        fi
+
+    - name: Set up Docker Buildx
+      if: ${{ inputs.execution-mode == 'container' }}
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      if: ${{ inputs.execution-mode == 'container' }}
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: ${{ inputs.dockerfile }}
+        load: true
+        tags: ${{ inputs.image-name }}
+
+    - name: Run build target
+      uses: ./.github/actions/run-command-in-docker-image
+      with:
+        execution-mode: ${{ inputs.execution-mode }}
+        image-name: ${{ inputs.image-name }}
+        environment-variables: ${{ steps.prepare-build-target.outputs.environment_variables }}
+        command: ${{ steps.prepare-build-target.outputs.command }}
+
+    - name: Cache NuGet packages
+      if: ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # tag: v5.0.5
+      with:
+        key: ${{ hashFiles('**/Directory.packages.props', './build/LibraryVersions.g.cs', '**/packages.config' ) }}
+        path: ${{ env.NUGET_PACKAGES }}

@@ -15,22 +15,22 @@ permissions:
   contents: read
 
 jobs:
-  build-container:
-    uses: ./.github/workflows/build-container.yml
-
   build-ubuntu1604-native:
     uses: ./.github/workflows/build-ubuntu1604-native-container.yml
 
+  build-windows:
+    uses: ./.github/workflows/build-windows.yml
+
   build:
-    needs: build-ubuntu1604-native
+    needs: [ build-windows, build-ubuntu1604-native ]
     uses: ./.github/workflows/build.yml
 
   build-nuget-packages:
-    needs: [ build, build-container ]
+    needs: [ build-windows, build ]
     uses: ./.github/workflows/build-nuget-packages.yml
 
   test-build-managed:
-    needs: build
+    needs: [ build-windows, build ]
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +110,7 @@ jobs:
         run: rm SqlLocalDB.msi
 
   test-build-native:
-    needs: build
+    needs: build-windows
     strategy:
       fail-fast: false
       matrix:
@@ -152,7 +152,7 @@ jobs:
         run: ./build.cmd NativeTests
 
   test-build-windows-container-tests:
-    needs: build
+    needs: build-windows
     strategy:
       fail-fast: false
       matrix:
@@ -206,7 +206,7 @@ jobs:
           path: test-artifacts/
 
   test-build-container:
-    needs: [build, build-container]
+    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -214,23 +214,28 @@ jobs:
           - machine: ubuntu-22.04
             base-image: alpine
             build-source: alpine-x64
-            os-type: linux-musl
+            environment-variables: |
+              OS_TYPE=linux-musl
           - machine: ubuntu-22.04
             base-image: debian
             build-source: ubuntu-22.04
-            os-type: linux-glibc
+            environment-variables: |
+              OS_TYPE=linux-glibc
           - machine: ubuntu-22.04
             base-image: centos-stream9
             build-source: ubuntu-22.04
-            os-type: linux-glibc
+            environment-variables: |
+              OS_TYPE=linux-glibc
           - machine: ubuntu-22.04-arm
             base-image: alpine
             build-source: alpine-arm64
-            os-type: linux-musl
+            environment-variables: |
+              OS_TYPE=linux-musl
           - machine: ubuntu-22.04-arm
             base-image: debian-arm64
             build-source: ubuntu-22.04-arm
-            os-type: linux-glibc
+            environment-variables: |
+              OS_TYPE=linux-glibc
     runs-on: ${{ matrix.machine }}
     timeout-minutes: 60
     steps:
@@ -246,12 +251,25 @@ jobs:
         name: bin-${{ matrix.build-source }}
         path: bin/tracer-home
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: ./docker/${{ matrix.base-image }}.dockerfile
+        load: true
+        tags: otel-dotnet-auto-test-${{ matrix.base-image }}
+
     - name: Build in Docker container
-      run: |
-        set -e
-        docker build -t mybuildimage -f "./docker/${{ matrix.base-image }}.dockerfile" .
-        docker run -e OS_TYPE=${{ matrix.os-type }} --rm --mount type=bind,source="${GITHUB_WORKSPACE}",target=/project mybuildimage \
-          /bin/sh -c 'git config --global --add safe.directory /project && ./build.sh TestWorkflow --containers none'
+      uses: ./.github/actions/run-command-in-docker-image
+      with:
+        image-name: otel-dotnet-auto-test-${{ matrix.base-image }}
+        environment-variables: ${{ matrix.environment-variables }}
+        command: |
+          git config --global --add safe.directory /project
+          ./build.sh TestWorkflow --containers none
 
     - name: Upload test logs
       if: always()

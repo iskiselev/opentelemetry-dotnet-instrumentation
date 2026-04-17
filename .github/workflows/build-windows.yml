@@ -1,0 +1,40 @@
+name: Build on Windows Runner
+
+on:
+  workflow_call:
+
+env:
+  NUGET_PACKAGES: ${{ github.workspace }}/packages
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag: v6.0.2
+        with:
+          fetch-depth: 0 # fetching all, needed to correctly calculate version
+
+      - name: Run shared build workflow setup
+        uses: ./.github/actions/run-build-workflow
+
+      - name: Upload managed net binaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
+        with:
+          name: bin-windows-2022-managed-net
+          path: bin/tracer-home/net/*
+
+      - name: Run shared post-build checks and uploads
+        uses: ./.github/actions/test-and-publish-build-artifacts
+        with:
+          log-directory: /c/ProgramData/OpenTelemetry .NET AutoInstrumentation/logs
+          run-powershell-module-test: "true"
+          powershell-log-path: C:\ProgramData\OpenTelemetry .NET AutoInstrumentation\logs\*
+          binaries-artifact-name: bin-windows-2022
+          installation-scripts-artifact-name: installation-scripts-windows-2022
