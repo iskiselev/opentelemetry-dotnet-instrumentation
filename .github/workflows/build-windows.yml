@@ -20,21 +20,8 @@ jobs:
         with:
           fetch-depth: 0 # fetching all, needed to correctly calculate version
 
-      - name: Run shared build workflow setup
-        uses: ./.github/actions/run-build-workflow
-
-      - name: Upload managed net binaries
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
+      - name: Run host build
+        uses: ./.github/actions/run-build-host
         with:
-          name: bin-windows-2022-managed-net
-          path: bin/tracer-home/net/*
-
-      - name: Run shared post-build checks and uploads
-        uses: ./.github/actions/test-and-publish-build-artifacts
-        with:
+          artifact-name: windows-2022
           log-directory: /c/ProgramData/OpenTelemetry .NET AutoInstrumentation/logs
-          run-powershell-module-test: "true"
-          powershell-log-path: C:\ProgramData\OpenTelemetry .NET AutoInstrumentation\logs\*
-          binaries-artifact-name: bin-windows-2022
-          installation-scripts-artifact-name: installation-scripts-windows-2022

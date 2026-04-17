@@ -19,31 +19,36 @@ jobs:
         include:
           - machine: ubuntu-22.04
             artifact-name: ubuntu-22.04
-            log-dir: "/var/log/opentelemetry/dotnet"
-            execution-mode: host
-            replace-ubuntu1604-native: true
-          - machine: macos-14
-            artifact-name: macos-14
-            log-dir: "/var/log/opentelemetry/dotnet"
-            execution-mode: host
+            build-wrapper: host
+            replace-artifacts: |
+              bin-windows-2022!net
+              bin-ubuntu1604-native!linux-x64
           - machine: ubuntu-22.04-arm
             artifact-name: ubuntu-22.04-arm
-            log-dir: "/var/log/opentelemetry/dotnet"
-            execution-mode: host
+            build-wrapper: host
+            replace-artifacts: |
+              bin-windows-2022!net
+          - machine: macos-14
+            artifact-name: macos-14
+            build-wrapper: host
+            replace-artifacts: |
+              bin-windows-2022!net
           - machine: ubuntu-22.04
             artifact-name: alpine-x64
-            log-dir: "/var/log/opentelemetry/dotnet"
-            execution-mode: container
+            build-wrapper: linux-container
             dockerfile: ./docker/alpine.dockerfile
             environment-variables: |
               OS_TYPE=linux-musl
+            replace-artifacts: |
+              bin-windows-2022!net
           - machine: ubuntu-22.04-arm
             artifact-name: alpine-arm64
-            log-dir: "/var/log/opentelemetry/dotnet"
-            execution-mode: container
+            build-wrapper: linux-container
             dockerfile: ./docker/alpine.dockerfile
             environment-variables: |
               OS_TYPE=linux-musl
+            replace-artifacts: |
+              bin-windows-2022!net
     runs-on: ${{ matrix.machine }}
     steps:
 
@@ -52,77 +57,19 @@ jobs:
         with:
           fetch-depth: 0 # fetching all, needed to correctly calculate version
 
-      - name: Download managed net binaries from Windows build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # tag: v8.0.1
+      - name: Run host build
+        if: ${{ matrix.build-wrapper == 'host' }}
+        uses: ./.github/actions/run-build-host
         with:
-          name: bin-windows-2022-managed-net
-          path: bin/ci-artifacts/bin-windows-2022-managed-net
+          artifact-name: ${{ matrix.artifact-name }}
+          replace-artifacts: ${{ matrix.replace-artifacts }}
 
-      - name: Run shared build workflow setup
-        uses: ./.github/actions/run-build-workflow
+      - name: Run Linux container build
+        if: ${{ matrix.build-wrapper == 'linux-container' }}
+        uses: ./.github/actions/run-build-linux-container
         with:
-          execution-mode: ${{ matrix.execution-mode }}
+          artifact-name: ${{ matrix.artifact-name }}
           dockerfile: ${{ matrix.dockerfile }}
           image-name: otel-dotnet-auto-build-${{ matrix.artifact-name }}
           environment-variables: ${{ matrix.environment-variables }}
-
-      - name: Download native Ubuntu 16.04 Artifacts from build job
-        if: ${{ matrix.replace-ubuntu1604-native }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # tag: v8.0.1
-        with:
-          name: bin-ubuntu1604-native
-          path: bin/ci-artifacts/bin-ubuntu1604-native
-
-      - name: Replace Ubuntu native code by Ubuntu 16.04 artifacts
-        if: ${{ matrix.replace-ubuntu1604-native }}
-        run: |
-          rm ./bin/tracer-home/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so
-          rm ./bin/tracer-home/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so.debug
-          cp ./bin/ci-artifacts/bin-ubuntu1604-native/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so ./bin/tracer-home/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so
-          cp ./bin/ci-artifacts/bin-ubuntu1604-native/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so.debug ./bin/tracer-home/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so.debug
-
-      - name: Replace managed net folder by Windows build artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          source="./bin/ci-artifacts/bin-windows-2022-managed-net"
-          rm -rf ./bin/tracer-home/net
-          mkdir -p ./bin/tracer-home/net
-          cp -R "${source}/." ./bin/tracer-home/net
-
-      - name: Install MacOS CoreUtils
-        if: ${{ runner.os == 'macOS' }}
-        run: brew install coreutils
-
-      - name: Create test directory
-        if: ${{ matrix.execution-mode == 'host' && runner.os != 'Windows' }}
-        run: sudo mkdir -p ${{ matrix.log-dir }} && sudo chmod a+rwx ${{ matrix.log-dir }}  # the instrumented process has no permissions to create log dir
-
-      - name: Run shared post-build checks and uploads
-        if: ${{ matrix.execution-mode == 'host' }}
-        uses: ./.github/actions/test-and-publish-build-artifacts
-        with:
-          log-directory: ${{ matrix.log-dir }}
-          binaries-artifact-name: bin-${{ matrix.artifact-name }}
-          installation-scripts-artifact-name: installation-scripts-${{ matrix.artifact-name }}
-
-      - name: Test the Shell scripts from README.md in Docker container
-        if: ${{ matrix.execution-mode == 'container' }}
-        uses: ./.github/actions/run-command-in-docker-image
-        with:
-          image-name: otel-dotnet-auto-build-${{ matrix.artifact-name }}
-          command: |
-            set -e
-            dotnet publish -f net10.0 -c Release ./test/test-applications/integrations/TestApplication.Smoke
-            export OTEL_DOTNET_AUTO_HOME="${PWD}/bin/tracer-home"
-            . ./instrument.sh
-            ./test/test-applications/integrations/bin/TestApplication.Smoke/Release/net10.0/publish/TestApplication.Smoke
-            test "$(ls -A /var/log/opentelemetry/dotnet )"
-
-      - name: Publish Linux build
-        if: ${{ matrix.execution-mode == 'container' && !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
-        with:
-          name: bin-${{ matrix.artifact-name }}
-          path: bin/tracer-home
-        continue-on-error: true
+          replace-artifacts: ${{ matrix.replace-artifacts }}

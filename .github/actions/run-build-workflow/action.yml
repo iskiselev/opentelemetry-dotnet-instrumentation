@@ -27,6 +27,11 @@ inputs:
     required: false
     default: git config --global --add safe.directory /project
 
+outputs:
+  container-name:
+    description: Running build container name when execution-mode is container.
+    value: ${{ steps.start-build-container.outputs.container_name }}
+
 runs:
   using: composite
   steps:
@@ -48,37 +53,9 @@ runs:
 
     - name: Restore NuGet packages
       if: ${{ inputs.execution-mode == 'host' && steps.nuget-cache.outputs.cache-hit != 'true' }}
-      shell: bash
-      run: ./build.cmd Restore
-
-    - name: Prepare build target command
-      id: prepare-build-target
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        if [[ "${{ inputs.execution-mode }}" == "container" ]]; then
-          cat >> "$GITHUB_OUTPUT" <<'EOF'
-        command<<__COMMAND__
-        set -e
-        ${{ inputs.container-setup-command }}
-        ./build.sh ${{ inputs.build-target }}
-        __COMMAND__
-        environment_variables<<__ENVIRONMENT_VARIABLES__
-        NUGET_PACKAGES=/project/packages
-        ${{ inputs.environment-variables }}
-        __ENVIRONMENT_VARIABLES__
-        EOF
-        else
-          cat >> "$GITHUB_OUTPUT" <<'EOF'
-        command<<__COMMAND__
-        ./build.cmd ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
-        __COMMAND__
-        environment_variables<<__ENVIRONMENT_VARIABLES__
-        ${{ inputs.environment-variables }}
-        __ENVIRONMENT_VARIABLES__
-        EOF
-        fi
+      uses: ./.github/actions/run-command-in-environment
+      with:
+        run: ./build.cmd Restore
 
     - name: Validate container inputs
       if: ${{ inputs.execution-mode == 'container' }}
@@ -107,13 +84,56 @@ runs:
         load: true
         tags: ${{ inputs.image-name }}
 
-    - name: Run build target
-      uses: ./.github/actions/run-command-in-docker-image
+    - name: Start build container
+      if: ${{ inputs.execution-mode == 'container' }}
+      id: start-build-container
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        sanitized_name="$(echo "${{ inputs.image-name }}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-')"
+        container_name="${sanitized_name}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+        docker_args=(
+          --detach
+          --name "${container_name}"
+          --mount "type=bind,source=${GITHUB_WORKSPACE},target=/project"
+          --workdir /project
+          -e "NUGET_PACKAGES=/project/packages"
+        )
+
+        while IFS= read -r environment_variable; do
+          [[ -z "${environment_variable}" ]] && continue
+          docker_args+=(-e "${environment_variable}")
+        done <<'EOF'
+        ${{ inputs.environment-variables }}
+        EOF
+
+        docker run "${docker_args[@]}" "${{ inputs.image-name }}" /bin/sh -c 'trap "exit 0" TERM INT; while true; do sleep 3600; done'
+
+        echo "container_name=${container_name}" >> "$GITHUB_OUTPUT"
+
+    - name: Prepare build container
+      if: ${{ inputs.execution-mode == 'container' }}
+      uses: ./.github/actions/run-command-in-environment
       with:
-        execution-mode: ${{ inputs.execution-mode }}
-        image-name: ${{ inputs.image-name }}
-        environment-variables: ${{ steps.prepare-build-target.outputs.environment_variables }}
-        command: ${{ steps.prepare-build-target.outputs.command }}
+        container-name: ${{ steps.start-build-container.outputs.container_name }}
+        run: |
+          set -e
+          ${{ inputs.container-setup-command }}
+
+    - name: Run build target on host
+      if: ${{ inputs.execution-mode == 'host' }}
+      uses: ./.github/actions/run-command-in-environment
+      with:
+        run: ./build.cmd ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
+
+    - name: Run build target in container
+      if: ${{ inputs.execution-mode == 'container' }}
+      uses: ./.github/actions/run-command-in-environment
+      with:
+        container-name: ${{ steps.start-build-container.outputs.container_name }}
+        run: ./build.sh ${{ inputs.build-target }}
 
     - name: Cache NuGet packages
       if: ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
