@@ -45,15 +45,11 @@ jobs:
             dockerfile: ./docker/alpine.dockerfile
             environment-variables: |
               OS_TYPE=linux-musl
-            replace-artifacts: |
-              bin-windows-2022!net
           - machine: ubuntu-22.04-arm
             artifact-name: alpine-arm64
             dockerfile: ./docker/alpine.dockerfile
             environment-variables: |
               OS_TYPE=linux-musl
-            replace-artifacts: |
-              bin-windows-2022!net
     uses: ./.github/workflows/_build-linux-container.yml
     with:
       runner: ${{ matrix.machine }}
