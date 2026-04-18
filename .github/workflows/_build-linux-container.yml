@@ -119,7 +119,7 @@ jobs:
           set -u
           docker exec -i "${{ steps.start-build-container.outputs.container_name }}" /bin/sh <<'__RUN_COMMAND__'
           set -e
-          ./build.sh ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit == 'true' }}
+          ./build.sh ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
           __RUN_COMMAND__
 
       - name: Cache NuGet packages

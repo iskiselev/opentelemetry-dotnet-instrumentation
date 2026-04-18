@@ -71,7 +71,7 @@ jobs:
 
       - name: Run build target
         shell: bash
-        run: ./build.cmd ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit == 'true' }}
+        run: ./build.cmd ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
 
       - name: Cache NuGet packages
         if: ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
