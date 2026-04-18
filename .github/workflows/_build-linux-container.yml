@@ -96,6 +96,12 @@ jobs:
           docker run "${docker_args[@]}" "${{ inputs.image-name }}" /bin/sh -c 'git config --global --add safe.directory /project && trap "exit 0" TERM INT; while true; do sleep 3600; done'
           echo "container_name=${container_name}" >> "$GITHUB_OUTPUT"
 
+      - name: Create test directory in container
+        shell: bash
+        run: |
+          set -u
+          docker exec -u 0 "${{ steps.start-build-container.outputs.container_name }}" /bin/sh -c "mkdir -p '${{ inputs.log-directory }}' && chmod a+rwx '${{ inputs.log-directory }}'"
+
       - name: Check for NuGet packages cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # tag: v5.0.5
         id: nuget-cache
