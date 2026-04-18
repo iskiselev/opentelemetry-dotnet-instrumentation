@@ -1,20 +1,34 @@
-name: Reusable Host Build
+name: Reusable Build
 
 on:
   workflow_call:
     inputs:
+      artifact-name:
+        description: Artifact suffix for uploaded outputs.
+        required: true
+        type: string
       runner:
         description: Runner label to execute the build on.
         required: true
         type: string
-      artifact-name:
-        description: Artifact suffix for uploaded outputs.
+      environment-type:
+        description: Build environment type. Use `host` for direct runner builds or `container` for Docker-based builds.
         required: true
+        type: string
+      dockerfile:
+        description: Path to the Dockerfile used for container execution.
+        required: false
+        default: ""
         type: string
       build-target:
         description: Build target to execute.
         required: false
         default: BuildWorkflow
+        type: string
+      os-type:
+        description: Optional OS_TYPE value to publish into the build command environment.
+        required: false
+        default: ""
         type: string
       replace-artifacts:
         description: Multiline list of replacements in the form <artifact_name>!<path>.
@@ -40,22 +54,34 @@ permissions:
   contents: read
 
 jobs:
-  build-host:
+  build:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
+    env:
+      SMOKE_TEST_APPLICATION: ./test/test-applications/integrations/bin/TestApplication.Smoke/Release/net10.0/publish/TestApplication.Smoke
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag: v6.0.2
         with:
           fetch-depth: 0 # fetching all, needed to correctly calculate version
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # tag: v5.2.0
+      - name: Set build script
+        shell: pwsh
+        run: |
+          if ('${{ runner.os }}' -eq 'Windows') {
+            'BUILD_SCRIPT=./build.ps1' >> $env:GITHUB_ENV
+          }
+          else {
+            'BUILD_SCRIPT=./build.sh' >> $env:GITHUB_ENV
+          }
+
+      - name: Prepare build environment
+        id: prepare-build-environment
+        uses: ./.github/actions/prepare-build-environment
         with:
-          dotnet-version: |
-            8.0.420
-            9.0.313
-            10.0.202
+          artifact-name: ${{ inputs.artifact-name }}
+          environment-type: ${{ inputs.environment-type }}
+          dockerfile: ${{ inputs.dockerfile }}
 
       - name: Check for NuGet packages cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # tag: v5.0.5
@@ -66,12 +92,19 @@ jobs:
 
       - name: Restore NuGet packages
         if: ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: ./build.cmd Restore
+        uses: ./.github/actions/run-command-in-environment
+        with:
+          container-name: ${{ steps.prepare-build-environment.outputs.container-name }}
+          run: ${{ env.BUILD_SCRIPT }} Restore
 
       - name: Run build target
-        shell: bash
-        run: ./build.cmd ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
+        env:
+          OS_TYPE: ${{ inputs.os-type }}
+        uses: ./.github/actions/run-command-in-environment
+        with:
+          container-name: ${{ steps.prepare-build-environment.outputs.container-name }}
+          container-publish-env: ${{ inputs.os-type != '' && 'OS_TYPE' || '' }}
+          run: ${{ env.BUILD_SCRIPT }} ${{ inputs.build-target }} --no-restore ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
 
       - name: Cache NuGet packages
         if: ${{ steps.nuget-cache.outputs.cache-hit != 'true' }}
@@ -85,36 +118,26 @@ jobs:
         with:
           replace-artifacts: ${{ inputs.replace-artifacts }}
 
-      - name: Install macOS CoreUtils
-        if: ${{ runner.os == 'macOS' }}
-        shell: bash
-        run: brew install coreutils
-
-      - name: Create test directory
-        if: ${{ runner.os != 'Windows' }}
-        shell: bash
-        run: |
-          sudo mkdir -p '${{ inputs.log-directory }}'
-          sudo chmod a+rwx '${{ inputs.log-directory }}'
+      - name: Prepare test environment
+        uses: ./.github/actions/prepare-test-environment
+        with:
+          environment-type: ${{ inputs.environment-type }}
+          container-name: ${{ steps.prepare-build-environment.outputs.container-name }}
+          log-directory: ${{ inputs.log-directory }}
 
       - name: Test the Shell scripts from README.md
-        shell: bash
-        run: |
-          dotnet publish -f net10.0 -c Release ./test/test-applications/integrations/TestApplication.Smoke
-          export OTEL_DOTNET_AUTO_HOME="${PWD}/bin/tracer-home"
-          . ./instrument.sh
-
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            smoke_app="./test/test-applications/integrations/bin/TestApplication.Smoke/Release/net10.0/publish/TestApplication.Smoke.exe"
-          else
-            smoke_app="./test/test-applications/integrations/bin/TestApplication.Smoke/Release/net10.0/publish/TestApplication.Smoke"
-          fi
-
-          "${smoke_app}"
-          test "$(ls -A '${{ inputs.log-directory }}')"
+        uses: ./.github/actions/run-command-in-environment
+        with:
+          container-name: ${{ steps.prepare-build-environment.outputs.container-name }}
+          run: |
+            dotnet publish -f net10.0 -c Release ./test/test-applications/integrations/TestApplication.Smoke
+            export OTEL_DOTNET_AUTO_HOME="${PWD}/bin/tracer-home"
+            . ./instrument.sh
+            "${{ env.SMOKE_TEST_APPLICATION }}"
+            test "$(ls -A '${{ inputs.log-directory }}')"
 
       - name: Test the Windows PowerShell module instructions from README.md
-        if: ${{ runner.os == 'Windows' }}
+        if: ${{ inputs.environment-type == 'host' && runner.os == 'Windows' }}
         shell: powershell
         run: |
           $logPath = "${{ inputs.powershell-log-path }}"
@@ -131,22 +154,25 @@ jobs:
           if (Test-Path $logPath) { throw "Log file exists. Instrumentation unregister failed." }
 
       - name: Upload binaries
-        if: ${{ always() }}
+        if: ${{ always() && (inputs.environment-type != 'container' || !cancelled()) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
         with:
           name: bin-${{ inputs.artifact-name }}
           path: bin/tracer-home
+        continue-on-error: ${{ inputs.environment-type == 'container' }}
 
       - name: Upload installation scripts
-        if: ${{ always() }}
+        if: ${{ always() && inputs.environment-type == 'host' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag: v7.0.1
         with:
           name: installation-scripts-${{ inputs.artifact-name }}
           path: bin/installation-scripts
 
       - name: Regenerate LibraryVersions.g.cs
-        shell: bash
-        run: ./build.cmd GenerateLibraryVersionFiles
+        uses: ./.github/actions/run-command-in-environment
+        with:
+          container-name: ${{ steps.prepare-build-environment.outputs.container-name }}
+          run: ${{ env.BUILD_SCRIPT }} GenerateLibraryVersionFiles
 
       - name: Generated files unchanged
         shell: bash
@@ -155,3 +181,10 @@ jobs:
           git config color.diff always
           git --no-pager diff
           [[ -z "$(git status --porcelain)" ]]
+
+      - name: Cleanup build environment
+        if: ${{ always() }}
+        uses: ./.github/actions/cleanup-build-environment
+        with:
+          environment-type: ${{ inputs.environment-type }}
+          container-name: ${{ steps.prepare-build-environment.outputs.container-name }}

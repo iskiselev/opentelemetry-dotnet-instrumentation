@@ -11,54 +11,52 @@ permissions:
   contents: read
 
 jobs:
-  build-host:
+  build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - machine: ubuntu-22.04
-            artifact-name: ubuntu-22.04
+          - artifact-name: ubuntu-22.04
+            runner: ubuntu-22.04
+            environment-type: host
+            dockerfile: ""
+            os-type: ""
             replace-artifacts: |
               bin-windows-2022!net
               bin-ubuntu1604-native!linux-x64
-          - machine: ubuntu-22.04-arm
-            artifact-name: ubuntu-22.04-arm
+          - artifact-name: ubuntu-22.04-arm
+            runner: ubuntu-22.04-arm
+            environment-type: host
+            dockerfile: ""
+            os-type: ""
             replace-artifacts: |
               bin-windows-2022!net
-          - machine: macos-14
-            artifact-name: macos-14
+          - artifact-name: macos-14
+            runner: macos-14
+            environment-type: host
+            dockerfile: ""
+            os-type: ""
             replace-artifacts: |
               bin-windows-2022!net
-    uses: ./.github/workflows/_build-host.yml
-    with:
-      runner: ${{ matrix.machine }}
-      artifact-name: ${{ matrix.artifact-name }}
-      replace-artifacts: ${{ matrix.replace-artifacts }}
-
-  build-linux-container:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - machine: ubuntu-22.04
-            artifact-name: alpine-x64
+          - artifact-name: alpine-x64
+            runner: ubuntu-22.04
+            environment-type: container
             dockerfile: ./docker/alpine.dockerfile
-            environment-variables: |
-              OS_TYPE=linux-musl
+            os-type: linux-musl
             replace-artifacts: |
               bin-windows-2022!net
-          - machine: ubuntu-22.04-arm
-            artifact-name: alpine-arm64
+          - artifact-name: alpine-arm64
+            runner: ubuntu-22.04-arm
+            environment-type: container
             dockerfile: ./docker/alpine.dockerfile
-            environment-variables: |
-              OS_TYPE=linux-musl
+            os-type: linux-musl
             replace-artifacts: |
               bin-windows-2022!net
-    uses: ./.github/workflows/_build-linux-container.yml
+    uses: ./.github/workflows/_build.yml
     with:
-      runner: ${{ matrix.machine }}
       artifact-name: ${{ matrix.artifact-name }}
+      runner: ${{ matrix.runner }}
+      environment-type: ${{ matrix.environment-type }}
       dockerfile: ${{ matrix.dockerfile }}
-      image-name: otel-dotnet-auto-build-${{ matrix.artifact-name }}
-      environment-variables: ${{ matrix.environment-variables }}
+      os-type: ${{ matrix.os-type }}
       replace-artifacts: ${{ matrix.replace-artifacts }}
