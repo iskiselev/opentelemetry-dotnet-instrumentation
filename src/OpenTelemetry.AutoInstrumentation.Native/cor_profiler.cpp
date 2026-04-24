@@ -68,6 +68,7 @@ HRESULT ModifyAppDomainExecuteAssembly(ICorProfilerInfo* info,
                                        const ModuleID    module_id,
                                        const mdMethodDef loader_method_token)
 {
+    Logger::Debug("ModifyAppDomainExecuteAssembly");
     ComPtr<IUnknown> metadata_interfaces;
     auto             hr =
         info->GetModuleMetaData(module_id, ofRead | ofWrite, IID_IMetaDataImport2, metadata_interfaces.GetAddressOf());
@@ -1541,6 +1542,29 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
         return S_OK;
     }
 
+    if (Logger::IsDebugEnabled())
+    {
+        ComPtr<IUnknown> debugMetadataInterfaces;
+        const auto debug_hr = this->info_->GetModuleMetaData(module_id, ofRead, IID_IMetaDataImport2,
+                                                             debugMetadataInterfaces.GetAddressOf());
+        if (SUCCEEDED(debug_hr))
+        {
+            const auto& debugMetadataImport = debugMetadataInterfaces.As<IMetaDataImport2>(IID_IMetaDataImport);
+            const auto& jittedMethod        = GetFunctionInfo(debugMetadataImport, function_token);
+            if (jittedMethod.IsValid())
+            {
+                Logger::Debug("JITCompilationStarted: function_id=", function_id, " token=", function_token,
+                              " jitted method class/name=", jittedMethod.type.name, ".", jittedMethod.name, "()");
+            }
+        }
+        else
+        {
+            Logger::Debug("JITCompilationStarted: unable to resolve jitted method class/name for function_id=",
+                          function_id, " token=", function_token, " module_id=", module_id, " HRESULT=",
+                          HResultStr(debug_hr));
+        }
+    }
+
     // we have to check if the Id is in the module_ids_ vector.
     // In case is True we create a local ModuleMetadata to inject the loader.
     if (!Contains(module_ids_, module_id))
@@ -1583,12 +1607,6 @@ HRESULT STDMETHODCALLTYPE CorProfiler::JITCompilationStartedOnNetFramework(Funct
     if (!caller.IsValid())
     {
         return S_OK;
-    }
-
-    if (Logger::IsDebugEnabled())
-    {
-        Logger::Debug("JITCompilationStarted: function_id=", function_id, " token=", function_token,
-                      " name=", caller.type.name, ".", caller.name, "()");
     }
 
     // In NETFx, NInject creates a temporary appdomain where the tracer can be laoded
