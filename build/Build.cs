@@ -134,7 +134,7 @@ partial class Build : NukeBuild
         .DependsOn(CompileMocks)
         .DependsOn(PublishMocks)
         .DependsOn(PublishIisTestApplications)
-        .DependsOn(InstallNetFxAssembliesGAC)
+        //.DependsOn(InstallNetFxAssembliesGAC)
         .DependsOn(RunManagedTests);
 
     string ContainersFilter()
