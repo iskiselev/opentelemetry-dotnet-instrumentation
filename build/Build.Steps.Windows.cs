@@ -228,8 +228,8 @@ partial class Build
 
     Target InstallNetFxAssembliesGAC => _ => _
         .Unlisted()
-        .After(BuildTracer)
-        .After(RunManagedUnitTests)
+        //.After(BuildTracer)
+        //.After(RunManagedUnitTests)
         .OnlyWhenStatic(() => IsWin && (TestTargetFramework == TargetFramework.NET462 || TestTargetFramework == TargetFramework.NOT_SPECIFIED))
         .Executes(() => RunNetFxGacOperation("-i"));
 
